@@ -8,7 +8,7 @@ if exists("g:vim_psql_plugin_loaded") || &cp
 endif
 
 let g:vim_psql_plugin_loaded = 1
-let g:vim_psql_plugin_sqleof = ';'
+let g:vim_psql_plugin_expand = 0
 
 fun! g:P_RunShellCommand(shell_command)
 	echohl String | echon '$ ' . a:shell_command[0:winwidth(0)-11] . '...' | echohl None
@@ -22,15 +22,13 @@ fun! g:P_RunShellCommand(shell_command)
 	setlocal nowrap
 	normal ggdG
 
+	let start_time = reltime()
 	set buftype=nofile
 	silent! exe "noautocmd .! " . a:shell_command
+	let l:time = reltimestr(reltime(start_time))
 
 	normal gg
-"	normal ggG
-"	let time = getline(".")
-"	exe 'setl stl=Done\ in\ ' . time[6:]
-"	normal kdG
-	exe 'setl stl=Done'
+	exe 'setl stl=Done\ in\ ' . substitute(l:time, '\s', '', 'g') . 's'
 
 	setlocal nomodifiable
 	noautocmd wincmd p
@@ -57,7 +55,9 @@ fun! g:P_RunArray(sqlarray, timing)
 		return
 	endif
 	if a:timing
+"		let l:thesql = ['SELECT NOW(3)+0 INTO @startTime;'] + a:sqlarray + ['; SELECT CONCAT(ROUND(NOW(3) - @startTime, 3), "s") Took\G']
 		let l:thesql = a:sqlarray
+"		let l:thesql = ['create temporary table z_vim_psql_timing as select now() tm;'] + a:sqlarray + ['; select extract(epoch from current_timestamp - tm) Took from z_vim_psql_timing;']
 	else
 		let l:thesql = a:sqlarray
 	endif
@@ -74,19 +74,30 @@ endfun
 
 func! g:P_SelectCursorTable()
 	let l:Table = expand('<cword>')
-	call P_RunArray(['SELECT * FROM `' . l:Table . '` LIMIT 100' . g:vim_psql_plugin_sqleof], 0)
+	call P_RunArray(['SELECT * FROM `' . l:Table . '` LIMIT 100;'], 0)
 endfun
 
 func! g:P_DescriptCursorTable()
 	let l:Table = expand('<cword>')
-	call P_RunArray(['select column_name, data_type, character_maximum_length, column_default, is_nullable from INFORMATION_SCHEMA.COLUMNS where table_name = ' . shellescape(l:Table) . g:vim_psql_plugin_sqleof], 0)
+	call P_RunArray(['select column_name, data_type, character_maximum_length, column_default, is_nullable from INFORMATION_SCHEMA.COLUMNS where table_name = ' . shellescape(l:Table) . ';'], 0)
+endfun
+
+fun! s:SetEosql(line)
+	let eosql = getline(a:line)
+	let m = matchstr(eosql, ';')
+	if (empty(m))
+		let g:vim_psql_plugin_expand = 1
+	else
+		let g:vim_psql_plugin_expand = 0
+	endif
 endfun
 
 fun! s:P_GetInstruction()
-	let l:p = ';'
+	let l:p = '\(\G\|;\)'
 	let l:PrevSemicolon = search(l:p, 'bnW')
 	let l:NextSemicolon = search(l:p, 'cnW')
 	let out = getline(l:PrevSemicolon, l:NextSemicolon)[1:]
+	call s:SetEosql(l:NextSemicolon)
 	return out
 endfun
 
@@ -116,6 +127,9 @@ fun! s:P_GetCommand()
 		let l:LineNum = l:LineNum + 1
 		let l:Line = getline(l:LineNum)
 	endwhile
+	if g:vim_psql_plugin_expand
+		let l:Command .= '-x'
+	endif
 	return l:Command
 endfun
 
